@@ -94,6 +94,22 @@ def run(
         #     input_tokens:   input_tokens
         #     output_tokens:  output_tokens
         # Call `tracer.write(record)`.
+        tool_calls = [
+                    {"id": b.id, "name": b.name, "input": b.input}
+                    for b in response.content
+                    if getattr(b, "type", None) == "tool_use"
+                ]
+
+        tracer.write(
+                    {
+                        "turn": turn,
+                        "stop_reason": response.stop_reason,
+                        "tool_calls": tool_calls,
+                        "latency_ms": round(latency_ms, 1),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                    }
+                )
 
         # TODO:Triage on response.stop_reason. The whole point of the
         # agentic loop is that THIS is what drives control flow — not the message text,
@@ -118,4 +134,34 @@ def run(
         # Case 3: anything else
         #   Raise UnexpectedStopReason naming the turn and the offending stop_reason.
         #   Do NOT silently retry, do NOT guess, do NOT treat max_tokens as success.
-        raise NotImplementedError("Exercise 1: implement the stop_reason triage")
+        if response.stop_reason == "end_turn":
+            working_messages.append({"role": "assistant", "content": response.content})
+            return FinalState(
+                messages=working_messages,
+                total_input_tokens=total_input,
+                total_output_tokens=total_output,
+                turn_count=turn,
+                final_content=list(response.content),
+            )
+
+        if response.stop_reason == "tool_use":
+            working_messages.append({"role": "assistant", "content": response.content})
+            tool_results: list[dict[str, Any]] = []
+            for block in response.content:
+                if getattr(block, "type", None) != "tool_use":
+                    continue
+                result_content = tool_executor(block.name, dict(block.input))
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result_content,
+                    }
+                )
+            working_messages.append({"role": "user", "content": tool_results})
+            continue
+
+        raise UnexpectedStopReason(
+            f"turn {turn}: unexpected stop_reason={response.stop_reason!r}"
+        )
+        

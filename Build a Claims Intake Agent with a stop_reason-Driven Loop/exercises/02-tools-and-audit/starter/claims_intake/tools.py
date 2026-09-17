@@ -43,8 +43,83 @@ SEVERITIES = ["low", "medium", "high"]
 #     Commits the model to a severity bucket.
 #
 # Later tools (request_clarification, route_to_adjuster, escalate_to_human) extend this list.
-TOOL_SCHEMAS: list[dict[str, Any]] = []
-
+TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "lookup_policy",
+        "description": (
+            "Look up a policyholder's coverage record. Use this early in the "
+            "conversation to confirm the policy exists, what is covered, and the "
+            "deductible. Returns coverage, deductible, status, and policy_holder."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "policy_id": {"type": "string", "description": "Policy identifier, e.g. POL-1001"}
+            },
+            "required": ["policy_id"],
+        },
+    },
+    {
+        "name": "record_claim_fact",
+        "description": (
+            "Record one normalized fact extracted from the claimant's statements "
+            "(e.g., incident_date, location, description, items_lost, injury_party). "
+            "Call once per fact. Facts accumulate into the case file used by routing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "description": "Snake_case field name, e.g. incident_date or location",
+                },
+                "value": {"type": "string", "description": "The fact as a short string"},
+            },
+            "required": ["field", "value"],
+        },
+    },
+    {
+        "name": "classify_claim",
+        "description": (
+            "Commit to a claim type with a confidence score and rationale. Call "
+            "this exactly once per claim, after enough facts and clarifications "
+            "have been gathered. If confidence is below 0.6, prefer escalate_to_human."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "claim_type": {"type": "string", "enum": CLAIM_TYPES},
+                "confidence": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "0.0 = no idea; 1.0 = certain",
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "One sentence explaining why this type fits the facts",
+                },
+            },
+            "required": ["claim_type", "confidence", "rationale"],
+        },
+    },
+    {
+        "name": "assess_severity",
+        "description": (
+            "Commit to a severity bucket with a rationale. Call this exactly once "
+            "per claim, after classification. Severity reflects damage magnitude, "
+            "injury severity, and policy coverage limits."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "severity": {"type": "string", "enum": SEVERITIES},
+                "rationale": {"type": "string"},
+            },
+            "required": ["severity", "rationale"],
+        },
+    },
+]
 # ----------------------------------------------------------------------------
 # Errors — Graceful Tool Failure shape
 # ----------------------------------------------------------------------------
