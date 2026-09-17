@@ -95,21 +95,21 @@ def run(
         #     output_tokens:  output_tokens
         # Call `tracer.write(record)`.
         tool_calls = [
-                    {"id": b.id, "name": b.name, "input": b.input}
-                    for b in response.content
-                    if getattr(b, "type", None) == "tool_use"
-                ]
+            {"id": b.id, "name": b.name, "input": b.input}
+            for b in response.content
+            if getattr(b, "type", None) == "tool_use"
+        ]
 
         tracer.write(
-                    {
-                        "turn": turn,
-                        "stop_reason": response.stop_reason,
-                        "tool_calls": tool_calls,
-                        "latency_ms": round(latency_ms, 1),
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                    }
-                )
+            {
+                "turn": turn,
+                "stop_reason": response.stop_reason,
+                "tool_calls": tool_calls,
+                "latency_ms": round(latency_ms, 1),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            }
+        )
 
         # TODO:Triage on response.stop_reason. The whole point of the
         # agentic loop is that THIS is what drives control flow — not the message text,
@@ -164,4 +164,3 @@ def run(
         raise UnexpectedStopReason(
             f"turn {turn}: unexpected stop_reason={response.stop_reason!r}"
         )
-        
