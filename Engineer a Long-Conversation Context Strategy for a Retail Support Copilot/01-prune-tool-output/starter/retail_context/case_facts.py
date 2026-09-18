@@ -28,7 +28,20 @@ from retail_context.transcript import Transcript
 # refund_status; subscription_id, subscription_plan, subscription_cancel_reason,
 # subscription_status; active_payment_method_last4, new_payment_method_last4,
 # payment_update_failure_code, payment_update_status.
-REQUIRED_FIELDS: tuple[str, ...] = ()
+REQUIRED_FIELDS: tuple[str, ...] = (
+    "customer_id",
+    "refund_order_id",
+    "refund_amount_usd",
+    "refund_status",
+    "subscription_id",
+    "subscription_plan",
+    "subscription_cancel_reason",
+    "subscription_status",
+    "active_payment_method_last4",
+    "new_payment_method_last4",
+    "payment_update_failure_code",
+    "payment_update_status",
+)
 
 
 # TODO (Exercise 2): Replace with a dataclass that carries the 12 fields above
@@ -40,8 +53,43 @@ REQUIRED_FIELDS: tuple[str, ...] = ()
 # fixed key order, Markdown headers, reviewer-readable.
 @dataclass
 class CaseFacts:
+    customer_id: str
+    refund_order_id: str
+    refund_amount_usd: float
+    refund_status: str
+    subscription_id: str
+    subscription_plan: str
+    subscription_cancel_reason: str
+    subscription_status: str
+    active_payment_method_last4: str
+    new_payment_method_last4: str
+    payment_update_failure_code: str
+    payment_update_status: str
+
     def to_markdown(self) -> str:
-        raise NotImplementedError("Exercise 2: render the 12-field block as Markdown")
+        lines = [
+            "# Case Facts",
+            "",
+            f"**Customer**: {self.customer_id}",
+            "",
+            "**Refund (resolved)**",
+            f"- order_id: {self.refund_order_id}",
+            f"- amount_usd: {self.refund_amount_usd}",
+            f"- status: {self.refund_status}",
+            "",
+            "**Subscription (resolved)**",
+            f"- subscription_id: {self.subscription_id}",
+            f"- plan: {self.subscription_plan}",
+            f"- cancel_reason: {self.subscription_cancel_reason}",
+            f"- status: {self.subscription_status}",
+            "",
+            "**Payment update (active)**",
+            f"- active_payment_method_last4: {self.active_payment_method_last4}",
+            f"- new_payment_method_last4: {self.new_payment_method_last4}",
+            f"- failure_code: {self.payment_update_failure_code}",
+            f"- status: {self.payment_update_status}",
+        ]
+        return "\n".join(lines)
 
 
 class CaseFactExtractionError(ValueError):
@@ -59,7 +107,24 @@ class CaseFactExtractionError(ValueError):
 # no markdown, no code fences. The prompt is reviewed for its strict-schema
 # intent; the reviewer reads it to decide whether following it would reliably
 # produce a parseable JSON with every required field.
-_SYSTEM_PROMPT = ""
+_SYSTEM_PROMPT = """You extract structured case facts from a customer support transcript.
+
+Return EXACTLY one JSON object with these keys and nothing else — no prose, no
+markdown, no code fences:
+
+  customer_id, refund_order_id, refund_amount_usd, refund_status,
+  subscription_id, subscription_plan, subscription_cancel_reason,
+  subscription_status, active_payment_method_last4, new_payment_method_last4,
+  payment_update_failure_code, payment_update_status
+
+Rules:
+- refund_amount_usd must be a JSON number (not a string).
+- last4 fields are zero-padded 4-digit strings (e.g. "0042").
+- Status/reason/plan fields are the exact tokens used in the transcript
+  (e.g. "cancelled_with_prorated_refund"), not paraphrased natural language.
+- If a field's value cannot be found in the transcript, its value is JSON
+  null. Never invent or guess a value.
+- Output JSON only. No explanation before or after it."""
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
@@ -97,7 +162,48 @@ def extract(
     #
     # 6. Construct and return a CaseFacts. Cast types explicitly:
     #    str(...) for ID/status fields, float(...) for refund_amount_usd.
-    raise NotImplementedError("Exercise 2: implement case-facts extraction")
+    user = f"Transcript:\n\n{transcript.full_text}"
+    target_model = model or get_model()
+    text, input_tokens, output_tokens = complete_with_system(
+        _SYSTEM_PROMPT, user, model=model, max_tokens=2048
+    )
+    parsed = _parse_json(text)
+
+    if log_path is not None:
+        log_path.write_text(
+            json.dumps(
+                {
+                    "model": target_model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "raw": parsed,
+                },
+                indent=2,
+            )
+        )
+
+    missing = [
+        name
+        for name in REQUIRED_FIELDS
+        if parsed.get(name) is None or parsed.get(name) == ""
+    ]
+    if missing:
+        raise CaseFactExtractionError(missing=missing, raw=parsed)
+
+    return CaseFacts(
+        customer_id=str(parsed["customer_id"]),
+        refund_order_id=str(parsed["refund_order_id"]),
+        refund_amount_usd=float(parsed["refund_amount_usd"]),
+        refund_status=str(parsed["refund_status"]),
+        subscription_id=str(parsed["subscription_id"]),
+        subscription_plan=str(parsed["subscription_plan"]),
+        subscription_cancel_reason=str(parsed["subscription_cancel_reason"]),
+        subscription_status=str(parsed["subscription_status"]),
+        active_payment_method_last4=str(parsed["active_payment_method_last4"]),
+        new_payment_method_last4=str(parsed["new_payment_method_last4"]),
+        payment_update_failure_code=str(parsed["payment_update_failure_code"]),
+        payment_update_status=str(parsed["payment_update_status"]),
+    )
 
 
 def to_dict(facts: CaseFacts) -> dict[str, Any]:

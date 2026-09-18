@@ -12,11 +12,16 @@ when it was placed, what it cost, whether it shipped, and the return-window dead
 # sentence per field is enough.
 #
 # Why each kept field is the only one that matters for return/refund reasoning:
-#   - <field>: <why it is decision-load-bearing for return/refund reasoning>
-#   - <field>: <why>
-#   - <field>: <why>
-#   - <field>: <why>
-#   - <field>: <why>
+#   - order_id: identifies the order so the decision can be tied back to the
+#     specific record and communicated to the customer.
+#   - order_date: anchors the return-window calculation, since eligibility is
+#     computed relative to when the order was placed.
+#   - order_total_usd: caps how much can be refunded; the agent cannot approve
+#     a refund larger than what was paid.
+#   - fulfillment_status: determines whether a cancel (not yet shipped) or a
+#     return (already delivered) is the applicable path.
+#   - return_eligible_until: the deadline the agent compares against today's
+#     date to decide whether the return window is still open.
 
 Implementation: deterministic field selection (no LLM call). The pruner has no
 `anthropic` import — enforced by an AST audit.
@@ -30,7 +35,13 @@ from __future__ import annotations
 # The 5 fields: order_id, order_date, order_total_usd, fulfillment_status,
 # return_eligible_until — chosen because they are the *only* fields needed for
 # the agent's return/refund decision.
-KEPT_FIELDS: tuple[str, ...] = ()
+KEPT_FIELDS: tuple[str, ...] = (
+    "order_id",
+    "order_date",
+    "order_total_usd",
+    "fulfillment_status",
+    "return_eligible_until",
+)
 
 
 class PrunerMissingFieldError(KeyError):
@@ -52,4 +63,9 @@ def prune_lookup_order(raw: dict) -> dict:
     #
     # Do NOT add an `anthropic` import here — the pruner is deterministic by
     # design. The AST audit will flag any LLM-driven implementation.
-    raise NotImplementedError("Exercise 1: implement deterministic 5-field pruning")
+    missing = [field for field in KEPT_FIELDS if field not in raw]
+    if missing:
+        raise PrunerMissingFieldError(
+            f"lookup_order response is missing required kept fields: {missing}"
+        )
+    return {field: raw[field] for field in KEPT_FIELDS}
