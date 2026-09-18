@@ -103,6 +103,91 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "required": ["severity", "rationale"],
         },
     },
+    {
+        "name": "request_clarification",
+        "description": (
+            "Ask the claimant ONE clarifying question to disambiguate the claim "
+            "type or fill a critical missing fact. Use only when the claim type is "
+            "genuinely ambiguous between two or more types. Returns the claimant's "
+            "reply, or the literal string NO_RESPONSE if the claimant cannot answer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "A single specific question"},
+                "ambiguity_between": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": CLAIM_TYPES},
+                    "minItems": 2,
+                    "description": "Candidate claim types the question is meant to distinguish",
+                },
+            },
+            "required": ["question", "ambiguity_between"],
+        },
+    },
+    {
+        "name": "route_to_adjuster",
+        "description": (
+            "TERMINAL TOOL. Route this claim to the matching adjuster queue. "
+            "Call this exactly once when classification confidence is at least "
+            "0.6 and severity has been assessed. After this, your next response "
+            "should be a brief confirmation and stop with end_turn."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "queue": {"type": "string", "enum": CLAIM_TYPES},
+                "claim_summary": {
+                    "type": "string",
+                    "description": "Two-to-three sentence summary the adjuster will read first",
+                },
+            },
+            "required": ["queue", "claim_summary"],
+        },
+    },
+    {
+        "name": "escalate_to_human",
+        "description": (
+            "TERMINAL TOOL. Escalate this claim to a human reviewer when "
+            "classification confidence is below 0.6 even after clarification, or "
+            "when the claim cannot be routed safely (multiple plausible types, "
+            "missing critical facts the claimant cannot supply, policy disputes). "
+            "Call this exactly once. After this, your next response should be a "
+            "brief confirmation and stop with end_turn."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Short reason: unresolved_ambiguity | low_confidence | missing_facts | policy_dispute | other",
+                },
+                "structured_summary": {
+                    "type": "object",
+                    "properties": {
+                        "policy_id": {"type": "string"},
+                        "root_cause": {"type": "string"},
+                        "candidate_claim_types": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": CLAIM_TYPES},
+                        },
+                        "case_facts": {"type": "object"},
+                        "recommended_action": {"type": "string"},
+                        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    },
+                    "required": [
+                        "policy_id",
+                        "root_cause",
+                        "candidate_claim_types",
+                        "case_facts",
+                        "recommended_action",
+                        "confidence",
+                    ],
+                },
+            },
+            "required": ["reason", "structured_summary"],
+        },
+    },
     # TODO: Add three more tool schemas to this list.
     #
     #   - request_clarification(question: str, ambiguity_between: list of >=2 CLAIM_TYPES)
@@ -193,16 +278,22 @@ def _t_assess_severity(session: ClaimSession, inp: dict[str, Any]) -> str:
 
 
 def _t_request_clarification(session: ClaimSession, inp: dict[str, Any]) -> str:
-    # TODO: Implement the clarification dispatcher.
-    #   1. Validate inp["question"] is a string and inp["ambiguity_between"] is a list of
-    #      at least 2 entries; otherwise return _err("permanent", False, ...).
-    #   2. Record the asked clarification in session.clarifications_asked (so the runner
-    #      can count it).
-    #   3. Substring-match the question (case-insensitive) against the keys in
-    #      session.clarification_responses; if any key appears in the question, return
-    #      _ok({"claimant_reply": <the matching reply>}).
-    #   4. Otherwise return _ok({"claimant_reply": "NO_RESPONSE"}).
-    return _err("permanent", False, "TODO: _t_request_clarification not implemented yet")
+    question = inp.get("question")
+    candidates = inp.get("ambiguity_between")
+    if not isinstance(question, str):
+        return _err("permanent", False, "question must be a string")
+    if not isinstance(candidates, list) or len(candidates) < 2:
+        return _err("permanent", False, "ambiguity_between must list at least two candidate types")
+    session.clarifications_asked.append({"question": question, "candidates": list(candidates)})
+
+    # Match the question against the fixture's scripted responses.
+    # Pattern matching is intentionally loose: a substring match on the
+    # claimant's keyword is enough. If nothing matches, return NO_RESPONSE.
+    qlow = question.lower()
+    for pattern, reply in session.clarification_responses.items():
+        if pattern.lower() in qlow:
+            return _ok({"claimant_reply": reply})
+    return _ok({"claimant_reply": "NO_RESPONSE"})
 
 
 def _t_route_to_adjuster(session: ClaimSession, inp: dict[str, Any]) -> str:
